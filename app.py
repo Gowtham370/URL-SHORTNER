@@ -5,12 +5,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import redis
+import os
 
 app = Flask(__name__)
 cache = redis.Redis(host='localhost', port=6379, db=0)
 
 # 🔹 Database setup
-engine = create_engine("sqlite:///urls.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///urls.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL)
 Base.metadata.create_all(engine)
 
 Session = sessionmaker(bind=engine)
