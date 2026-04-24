@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>URL Shortener</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 min-h-screen">
+
+<div class="max-w-6xl mx-auto p-6">
+
+    <!-- Header -->
+    <h1 class="text-4xl text-white font-bold text-center mb-8">
+        🚀 URL Shortener Dashboard
+    </h1>
+
+    <!-- Create Form Card -->
+    <div class="bg-white rounded-2xl shadow-xl p-6 mb-8">
+        <h2 class="text-xl font-semibold mb-4">Create Short URL</h2>
+
+        <div class="grid md:grid-cols-3 gap-4">
+            <input id="url" type="text" placeholder="Enter URL (https://...)"
+                class="border p-3 rounded-lg w-full focus:ring-2 focus:ring-indigo-400">
+
+            <input id="custom" type="text" placeholder="Custom alias (optional)"
+                class="border p-3 rounded-lg w-full focus:ring-2 focus:ring-indigo-400">
+
+            <button onclick="shorten()"
+                class="bg-indigo-600 text-white rounded-lg px-4 py-3 hover:bg-indigo-700 transition">
+                Shorten
+            </button>
+        </div>
+
+        <div id="result" class="mt-4 text-green-600 font-semibold"></div>
+    </div>
+
+    <!-- Table Card -->
+    <div class="bg-white rounded-2xl shadow-xl p-6">
+        <h2 class="text-xl font-semibold mb-4">All URLs</h2>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="p-3">Short</th>
+                        <th class="p-3">Original</th>
+                        <th class="p-3">Clicks</th>
+                        <th class="p-3">Created</th>
+                        <th class="p-3">Last Accessed</th>
+                        <th class="p-3">Copy</th>
+                    </tr>
+                </thead>
+
+                <tbody id="data"></tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+function shorten() {
+    const url = document.getElementById("url").value;
+    const custom = document.getElementById("custom").value;
+
+    fetch("/shorten", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            url: url,
+            custom: custom || null
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            document.getElementById("result").innerText = data.error;
+        } else {
+            const code = data.short_url.split("/").pop();
+
+document.getElementById("result").innerHTML = `
+    Short Link:
+    <a href="${data.short_url}" target="_blank" class="text-blue-500 underline">
+        ${data.short_url}
+    </a>
+    <br>
+    <button onclick="navigator.clipboard.writeText('${data.short_url}')"
+        class="mt-2 bg-gray-200 px-3 py-1 rounded">
+        Copy
+    </button>
+`;
+
+            loadData(); // refresh table
+        }
+    });
+}
+
+function copyLink(url) {
+    navigator.clipboard.writeText(url);
+    alert("Copied!");
+}
+
+function loadData() {
+    fetch('/all')
+    .then(res => res.json())
+    .then(data => {
+        const table = document.getElementById("data");
+        table.innerHTML = "";
+
+        data.forEach(item => {
+            const shortUrl = window.location.origin + "/" + item.short_code;
+
+            const row = `
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="p-3">
+                        <a href="/${item.short_code}" target="_blank"
+                           class="text-indigo-600 font-bold">
+                           ${item.short_code}
+                        </a>
+                    </td>
+
+                    <td class="p-3 truncate max-w-xs">
+                        <a href="${item.original_url}" target="_blank"
+                           class="text-blue-500 underline">
+                           ${item.original_url}
+                        </a>
+                    </td>
+
+                    <td class="p-3">${item.clicks}</td>
+
+                    <td class="p-3">${item.created_at}</td>
+
+                    <td class="p-3">${item.last_accessed || "Never"}</td>
+
+                    <td class="p-3">
+                        <button onclick="copyLink('${shortUrl}')"
+                            class="bg-gray-200 px-3 py-1 rounded hover:bg-gray-300">
+                            Copy
+                        </button>
+                    </td>
+                </tr>
+            `;
+            table.innerHTML += row;
+        });
+    });
+}
+
+// Load data on page load
+loadData();
+</script>
+
+</body>
+</html>

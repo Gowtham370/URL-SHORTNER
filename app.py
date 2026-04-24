@@ -1,0 +1,153 @@
+from flask import Flask, redirect, request, jsonify, render_template
+from models import URL, Base
+from utils import encode_base62
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+import redis
+
+app = Flask(__name__)
+cache = redis.Redis(host='localhost', port=6379, db=0)
+
+# 🔹 Database setup
+engine = create_engine("sqlite:///urls.db")
+Base.metadata.create_all(engine)
+
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# 🔹 Dashboard UI
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
+
+@app.route("/create")
+def create_page():
+    return render_template("create.html")
+
+# 🔹 Home route
+@app.route("/")
+def home():
+    return jsonify({"message": "URL Shortener Running 🚀"})
+
+# 🔹 Create short URL
+@app.route("/shorten", methods=["POST"])
+def shorten():
+    data = request.get_json()
+
+    if not data or "url" not in data:
+        return jsonify({"error": "URL is required"}), 400
+
+    original_url = data.get("url")
+    custom_code = data.get("custom")
+
+    # 🔥 Custom short code
+    if custom_code:
+        existing = session.query(URL).filter_by(short_code=custom_code).first()
+        if existing:
+            return jsonify({"error": "Custom code already taken"}), 400
+
+        new_url = URL(
+            original_url=original_url,
+            short_code=custom_code
+        )
+        session.add(new_url)
+        session.commit()
+
+        return jsonify({
+            "short_url": f"http://127.0.0.1:5000/{custom_code}"
+        })
+
+    # 🔹 Auto-generated short code
+    new_url = URL(original_url=original_url)
+    session.add(new_url)
+    session.commit()
+
+    short_code = encode_base62(new_url.id)
+    new_url.short_code = short_code
+    session.commit()
+
+    return jsonify({
+        "short_url": f"http://127.0.0.1:5000/{short_code}"
+    })
+
+# 🔥 Redirect + Analytics (FIXED)
+@app.route("/<short_code>")
+def redirect_url(short_code):
+    url = session.query(URL).filter_by(short_code=short_code).first()
+
+    if not url:
+        return "URL not found", 404
+
+    # 🔥 ALWAYS update analytics
+    url.clicks += 1
+    url.last_accessed = datetime.utcnow()
+    session.commit()
+
+    return redirect(url.original_url)
+
+# 🔹 Stats API
+@app.route("/stats/<short_code>")
+def stats(short_code):
+    url = session.query(URL).filter_by(short_code=short_code).first()
+
+    if not url:
+        return jsonify({"error": "Not found"}), 404
+
+    return jsonify({
+        "short_code": url.short_code,
+        "original_url": url.original_url,
+        "clicks": url.clicks,
+        "created_at": str(url.created_at),
+        "last_accessed": str(url.last_accessed) if url.last_accessed else None
+    })
+
+# 🔹 Get all URLs (for dashboard)
+@app.route("/all")
+def get_all_urls():
+    urls = session.query(URL).all()
+
+    result = []
+
+    for url in urls:
+        result.append({
+            "short_code": url.short_code,
+            "original_url": url.original_url,
+            "clicks": url.clicks,
+            "created_at": str(url.created_at),
+            "last_accessed": str(url.last_accessed) if url.last_accessed else None
+        })
+
+    return jsonify(result)
+
+@app.route("/<short_code>")
+def redirect_url(short_code):
+    # 1) Try cache
+    cached = cache.get(short_code)
+    if cached:
+        # still update analytics!
+        url = session.query(URL).filter_by(short_code=short_code).first()
+        if url:
+            url.clicks += 1
+            url.last_accessed = datetime.utcnow()
+            session.commit()
+        return redirect(cached.decode())
+
+    # 2) Fallback DB
+    url = session.query(URL).filter_by(short_code=short_code).first()
+    if not url:
+        return "URL not found", 404
+
+    # 3) Cache it
+    cache.set(short_code, url.original_url)
+
+    # 4) Update analytics
+    url.clicks += 1
+    url.last_accessed = datetime.utcnow()
+    session.commit()
+
+    return redirect(url.original_url)
+
+# 🔹 Run app
+if __name__ == "__main__":
+    app.run(debug=True)
