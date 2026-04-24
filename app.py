@@ -4,14 +4,13 @@ from utils import encode_base62
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
-import redis
 import os
 
 app = Flask(__name__)
-cache = redis.Redis(host='localhost', port=6379, db=0)
 
 # 🔹 Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///urls.db")
+
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -19,7 +18,9 @@ engine = create_engine(DATABASE_URL)
 Base.metadata.create_all(engine)
 
 Session = sessionmaker(bind=engine)
-session = Session()
+
+def get_session():
+    return Session()
 
 # 🔹 Dashboard UI
 @app.route("/dashboard")
@@ -38,6 +39,7 @@ def home():
 # 🔹 Create short URL
 @app.route("/shorten", methods=["POST"])
 def shorten():
+    session = get_session()
     data = request.get_json()
 
     if not data or "url" not in data:
@@ -60,7 +62,7 @@ def shorten():
         session.commit()
 
         return jsonify({
-            "short_url": f"http://127.0.0.1:5000/{custom_code}"
+            "short_url": f"{request.host_url}{custom_code}"
         })
 
     # 🔹 Auto-generated short code
@@ -73,18 +75,20 @@ def shorten():
     session.commit()
 
     return jsonify({
-        "short_url": f"http://127.0.0.1:5000/{short_code}"
+        "short_url": f"{request.host_url}{short_code}"
     })
 
-# 🔥 Redirect + Analytics (FIXED)
+# 🔥 Redirect + Analytics (NO Redis for now)
 @app.route("/<short_code>")
 def redirect_url(short_code):
+    session = get_session()
+
     url = session.query(URL).filter_by(short_code=short_code).first()
 
     if not url:
         return "URL not found", 404
 
-    # 🔥 ALWAYS update analytics
+    # 🔥 Update analytics
     url.clicks += 1
     url.last_accessed = datetime.utcnow()
     session.commit()
@@ -94,6 +98,8 @@ def redirect_url(short_code):
 # 🔹 Stats API
 @app.route("/stats/<short_code>")
 def stats(short_code):
+    session = get_session()
+
     url = session.query(URL).filter_by(short_code=short_code).first()
 
     if not url:
@@ -107,13 +113,14 @@ def stats(short_code):
         "last_accessed": str(url.last_accessed) if url.last_accessed else None
     })
 
-# 🔹 Get all URLs (for dashboard)
+# 🔹 Get all URLs
 @app.route("/all")
 def get_all_urls():
+    session = get_session()
+
     urls = session.query(URL).all()
 
     result = []
-
     for url in urls:
         result.append({
             "short_code": url.short_code,
@@ -124,34 +131,6 @@ def get_all_urls():
         })
 
     return jsonify(result)
-
-@app.route("/<short_code>")
-def redirect_url(short_code):
-    # 1) Try cache
-    cached = cache.get(short_code)
-    if cached:
-        # still update analytics!
-        url = session.query(URL).filter_by(short_code=short_code).first()
-        if url:
-            url.clicks += 1
-            url.last_accessed = datetime.utcnow()
-            session.commit()
-        return redirect(cached.decode())
-
-    # 2) Fallback DB
-    url = session.query(URL).filter_by(short_code=short_code).first()
-    if not url:
-        return "URL not found", 404
-
-    # 3) Cache it
-    cache.set(short_code, url.original_url)
-
-    # 4) Update analytics
-    url.clicks += 1
-    url.last_accessed = datetime.utcnow()
-    session.commit()
-
-    return redirect(url.original_url)
 
 # 🔹 Run app
 if __name__ == "__main__":
