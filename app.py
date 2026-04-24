@@ -34,7 +34,7 @@ def create_page():
 # 🔹 Home route
 @app.route("/")
 def home():
-    return jsonify({"message": "URL Shortener Running 🚀"})
+    return redirect("/dashboard")
 
 # 🔹 Create short URL
 @app.route("/shorten", methods=["POST"])
